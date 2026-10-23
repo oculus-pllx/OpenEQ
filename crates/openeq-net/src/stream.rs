@@ -220,6 +220,15 @@ impl EqStream {
         self.inner.lock().await.close_reason
     }
 
+    /// Sends EQEmu's reliable-stream disconnect control packet.
+    pub async fn disconnect(&self) -> std::io::Result<()> {
+        let connect_code = self.inner.lock().await.connect_code;
+        self.socket
+            .send(&disconnect_wire(connect_code))
+            .await
+            .map(|_| ())
+    }
+
     pub fn peer(&self) -> SocketAddr {
         self.peer
     }
@@ -287,6 +296,18 @@ impl EqStream {
             }
         })
     }
+}
+
+fn disconnect_wire(connect_code: u32) -> [u8; 6] {
+    let code = connect_code.to_be_bytes();
+    [
+        0,
+        SessionOp::Disconnect as u8,
+        code[0],
+        code[1],
+        code[2],
+        code[3],
+    ]
 }
 
 impl Drop for EqStream {

@@ -1,6 +1,7 @@
 //! Shared connection configuration for the game and the headless zone probe.
 use crate::{
     login::{LoginClient, Session},
+    protocol::{ClientFamily, Protocol},
     world::WorldClient,
     zone::ZoneClient,
 };
@@ -20,12 +21,58 @@ pub struct ConnectionConfig {
     pub password: String,
     pub character: String,
     pub server_id: Option<u32>,
+    #[serde(default)]
+    pub family: ClientFamily,
+}
+
+// Deliberately no Debug implementation: this contains a password.
+#[derive(Clone, Deserialize)]
+pub struct RosterConfig {
+    pub host: String,
+    #[serde(default = "login_port")]
+    pub login_port: u16,
+    #[serde(default = "world_port")]
+    pub world_port: u16,
+    pub username: String,
+    pub password: String,
+    pub server_id: Option<u32>,
+    #[serde(default)]
+    pub family: ClientFamily,
 }
 fn login_port() -> u16 {
     5999
 }
 fn world_port() -> u16 {
     9000
+}
+
+impl RosterConfig {
+    pub fn from_reader(reader: impl std::io::Read) -> anyhow::Result<Self> {
+        let config: Self =
+            serde_json::from_reader(reader).context("invalid roster connection config")?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        for (name, value) in [
+            ("host", self.host.as_str()),
+            ("username", self.username.as_str()),
+            ("password", self.password.as_str()),
+        ] {
+            if value.is_empty() {
+                bail!("{name} must not be empty");
+            }
+        }
+        let protocol = Protocol::for_family(self.family);
+        if self.login_port != protocol.login_port {
+            bail!("login_port does not match the selected client family");
+        }
+        if self.world_port != protocol.world_port {
+            bail!("world_port does not match the selected client family");
+        }
+        Ok(())
+    }
 }
 
 /// Enter a selected character while preserving authenticated later zoning.
@@ -66,8 +113,13 @@ impl ConnectionConfig {
             .context("requested world is unavailable")?;
         login.play(server.server_id).await?;
         let world_address = SocketAddr::new(server.address, self.world_port);
-        let mut world =
-            WorldClient::connect(world_address, session.account_id, &session.key).await?;
+        let mut world = WorldClient::connect_for_family(
+            world_address,
+            session.account_id,
+            &session.key,
+            self.family,
+        )
+        .await?;
         let characters = world.characters().await?;
         tracing::info!(names = ?characters.iter().map(|c| &c.name).collect::<Vec<_>>(), "character list");
         let selected = characters
@@ -123,7 +175,10 @@ mod parallax_tests {
             r#"{"host":"server","login_port":6000,"username":"user","password":"sensitive-value"}"#,
             r#"{"host":"server","world_port":9001,"username":"user","password":"sensitive-value"}"#,
         ] {
-            let error = RosterConfig::from_reader(document.as_bytes()).unwrap_err();
+            let error = match RosterConfig::from_reader(document.as_bytes()) {
+                Ok(_) => panic!("invalid roster config was accepted"),
+                Err(error) => error,
+            };
             assert!(!error.to_string().contains("sensitive-value"));
         }
     }

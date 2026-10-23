@@ -206,6 +206,12 @@ impl LoginClient {
         parse_play_reply(&reply.data, server_id)
     }
 
+    /// Gracefully closes the reliable session and consumes this client.
+    pub async fn disconnect(self) -> Result<(), LoginError> {
+        self.stream.disconnect().await.map_err(StreamError::Io)?;
+        Ok(())
+    }
+
     /// Waits for a specific application opcode, logging anything else.
     async fn wait_for(&mut self, opcode: u16, what: &'static str) -> Result<AppPacket, LoginError> {
         loop {

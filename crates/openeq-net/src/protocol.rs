@@ -1,3 +1,55 @@
+use std::{fmt, str::FromStr};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClientFamily {
+    #[default]
+    Rof2,
+}
+
+pub struct Protocol {
+    pub family: ClientFamily,
+    pub login_port: u16,
+    pub world_port: u16,
+    pub world_login_info_size: usize,
+}
+
+impl Protocol {
+    pub const fn for_family(family: ClientFamily) -> Self {
+        match family {
+            ClientFamily::Rof2 => Self {
+                family,
+                login_port: 5999,
+                world_port: 9000,
+                world_login_info_size: 464,
+            },
+        }
+    }
+}
+
+impl fmt::Display for ClientFamily {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rof2 => formatter.write_str("rof2"),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("unsupported client family")]
+pub struct UnsupportedClientFamily;
+
+impl FromStr for ClientFamily {
+    type Err = UnsupportedClientFamily;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "rof2" => Ok(Self::Rof2),
+            _ => Err(UnsupportedClientFamily),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
