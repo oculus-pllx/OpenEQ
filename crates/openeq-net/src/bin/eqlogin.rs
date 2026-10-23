@@ -67,3 +67,28 @@ async fn main() -> anyhow::Result<()> {
     anyhow::ensure!(ready && npcs > 0, "zone entry / NPC streaming incomplete");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_accept_one_config_source_and_bounded_duration() {
+        let stdin = parse_options(["--config-stdin"]).unwrap();
+        assert_eq!(stdin.input, ConfigInput::Stdin);
+        assert_eq!(stdin.seconds, 30);
+
+        let file = parse_options(["--config", "/tmp/config", "--seconds", "5"]).unwrap();
+        assert_eq!(file.input, ConfigInput::File(PathBuf::from("/tmp/config")));
+        assert_eq!(file.seconds, 5);
+
+        for args in [
+            vec!["--config-stdin", "--config", "/tmp/config"],
+            vec!["--config-stdin", "--seconds", "4"],
+            vec!["--config-stdin", "--seconds", "301"],
+            vec![],
+        ] {
+            assert!(parse_options(args).is_err());
+        }
+    }
+}
