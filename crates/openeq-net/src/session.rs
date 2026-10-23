@@ -83,3 +83,54 @@ impl ConnectionConfig {
         enter_character(&mut world, world_address, &session, &self.character).await
     }
 }
+
+#[cfg(test)]
+mod parallax_tests {
+    use super::*;
+    use crate::protocol::ClientFamily;
+
+    macro_rules! assert_not_debug {
+        ($type:ty) => {{
+            struct Check;
+            trait AmbiguousIfDebug<A> {
+                fn check() {}
+            }
+            impl<T: ?Sized> AmbiguousIfDebug<()> for T {}
+            impl<T: ?Sized + std::fmt::Debug> AmbiguousIfDebug<Check> for T {}
+            let _ = <$type as AmbiguousIfDebug<_>>::check;
+        }};
+    }
+
+    #[test]
+    fn stdin_shape_defaults_to_rof2_and_never_requires_a_character() {
+        let config = RosterConfig::from_reader(
+            br#"{"host":"192.168.0.78","username":"user","password":"value"}"#.as_slice(),
+        )
+        .unwrap();
+
+        assert_eq!(config.family, ClientFamily::Rof2);
+        assert_eq!(config.login_port, 5999);
+        assert_eq!(config.world_port, 9000);
+        assert_eq!(config.server_id, None);
+    }
+
+    #[test]
+    fn roster_config_rejects_empty_fields_wrong_ports_and_redacts_errors() {
+        for document in [
+            r#"{"host":"","username":"user","password":"sensitive-value"}"#,
+            r#"{"host":"server","username":"","password":"sensitive-value"}"#,
+            r#"{"host":"server","username":"user","password":""}"#,
+            r#"{"host":"server","login_port":6000,"username":"user","password":"sensitive-value"}"#,
+            r#"{"host":"server","world_port":9001,"username":"user","password":"sensitive-value"}"#,
+        ] {
+            let error = RosterConfig::from_reader(document.as_bytes()).unwrap_err();
+            assert!(!error.to_string().contains("sensitive-value"));
+        }
+    }
+
+    #[test]
+    fn credential_bearing_configs_do_not_implement_debug() {
+        assert_not_debug!(ConnectionConfig);
+        assert_not_debug!(RosterConfig);
+    }
+}

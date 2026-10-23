@@ -23,6 +23,7 @@ pub mod crypto;
 pub mod login;
 pub mod opcodes;
 pub mod packet;
+pub mod protocol;
 pub mod stream;
 pub mod world;
 
