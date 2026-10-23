@@ -92,10 +92,14 @@ pub async fn enter_character(
 }
 
 impl ConnectionConfig {
+    pub fn from_reader(reader: impl std::io::Read) -> anyhow::Result<Self> {
+        serde_json::from_reader(reader).context("invalid connection config")
+    }
+
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .with_context(|| format!("reading connection config {}", path.display()))?;
-        serde_json::from_slice(&bytes).context("invalid connection config")
+        Self::from_reader(bytes.as_slice())
     }
     pub async fn connect(&self) -> anyhow::Result<ZoneClient> {
         let addr = tokio::net::lookup_host((self.host.as_str(), self.login_port))
