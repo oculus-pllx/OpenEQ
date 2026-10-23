@@ -2,6 +2,57 @@
 use openeq_net::{session::ConnectionConfig, zone::ZoneEvent};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
+#[derive(Debug, Eq, PartialEq)]
+enum ConfigInput {
+    File(PathBuf),
+    Stdin,
+}
+
+struct Options {
+    input: ConfigInput,
+    seconds: u64,
+}
+
+fn parse_options<I, S>(args: I) -> anyhow::Result<Options>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let values: Vec<String> = args
+        .into_iter()
+        .map(|value| value.as_ref().to_owned())
+        .collect();
+    let mut args = values.into_iter();
+    let mut input = None;
+    let mut seconds = 30u64;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--config" if input.is_none() => {
+                input = Some(ConfigInput::File(PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("missing config path"))?,
+                )));
+            }
+            "--config-stdin" if input.is_none() => input = Some(ConfigInput::Stdin),
+            "--seconds" => {
+                seconds = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing duration"))?
+                    .parse()?;
+            }
+            _ => anyhow::bail!("usage: eqlogin (--config FILE | --config-stdin) [--seconds 30]"),
+        }
+    }
+    anyhow::ensure!(
+        (5..=300).contains(&seconds),
+        "duration must be 5 through 300 seconds"
+    );
+    Ok(Options {
+        input: input.ok_or_else(|| anyhow::anyhow!("configuration source is required"))?,
+        seconds,
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -10,29 +61,17 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "openeq_net=info".into()),
         )
         .init();
-    let mut args = std::env::args().skip(1);
-    let mut config = None;
-    let mut seconds = 30u64;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--config" => config = args.next().map(PathBuf::from),
-            "--seconds" => {
-                seconds = args
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing duration"))?
-                    .parse()?
-            }
-            _ => anyhow::bail!("usage: eqlogin --config FILE [--seconds 30]"),
-        }
-    }
-    let config =
-        ConnectionConfig::load(&config.ok_or_else(|| anyhow::anyhow!("--config is required"))?)?;
+    let options = parse_options(std::env::args().skip(1))?;
+    let config = match options.input {
+        ConfigInput::File(path) => ConnectionConfig::load(&path)?,
+        ConfigInput::Stdin => ConnectionConfig::from_reader(std::io::stdin().lock())?,
+    };
     let mut zone = config.connect().await?;
     let mut spawns = HashMap::new();
     let mut moves = 0u64;
     let mut ready = false;
     let mut own = None;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(options.seconds);
     let mut heartbeat = tokio::time::interval(Duration::from_secs(2));
     loop {
         tokio::select! {
@@ -66,4 +105,29 @@ async fn main() -> anyhow::Result<()> {
     );
     anyhow::ensure!(ready && npcs > 0, "zone entry / NPC streaming incomplete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn options_accept_one_config_source_and_bounded_duration() {
+        let stdin = parse_options(["--config-stdin"]).unwrap();
+        assert_eq!(stdin.input, ConfigInput::Stdin);
+        assert_eq!(stdin.seconds, 30);
+
+        let file = parse_options(["--config", "/tmp/config", "--seconds", "5"]).unwrap();
+        assert_eq!(file.input, ConfigInput::File(PathBuf::from("/tmp/config")));
+        assert_eq!(file.seconds, 5);
+
+        for args in [
+            vec!["--config-stdin", "--config", "/tmp/config"],
+            vec!["--config-stdin", "--seconds", "4"],
+            vec!["--config-stdin", "--seconds", "301"],
+            vec![],
+        ] {
+            assert!(parse_options(args).is_err());
+        }
+    }
 }

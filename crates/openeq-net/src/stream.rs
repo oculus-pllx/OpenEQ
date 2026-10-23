@@ -220,6 +220,15 @@ impl EqStream {
         self.inner.lock().await.close_reason
     }
 
+    /// Sends EQEmu's reliable-stream disconnect control packet.
+    pub async fn disconnect(&self) -> std::io::Result<()> {
+        let connect_code = self.inner.lock().await.connect_code;
+        self.socket
+            .send(&disconnect_wire(connect_code))
+            .await
+            .map(|_| ())
+    }
+
     pub fn peer(&self) -> SocketAddr {
         self.peer
     }
@@ -287,6 +296,18 @@ impl EqStream {
             }
         })
     }
+}
+
+fn disconnect_wire(connect_code: u32) -> [u8; 6] {
+    let code = connect_code.to_be_bytes();
+    [
+        0,
+        SessionOp::Disconnect as u8,
+        code[0],
+        code[1],
+        code[2],
+        code[3],
+    ]
 }
 
 impl Drop for EqStream {
@@ -767,7 +788,7 @@ fn random_u32() -> u32 {
 mod tests {
     use super::*;
 
-    fn disconnect_wire(inner: &Inner, code: u32) -> Vec<u8> {
+    fn incoming_disconnect_wire(inner: &Inner, code: u32) -> Vec<u8> {
         let mut bytes = vec![0, SessionOp::Disconnect as u8];
         if inner.compressing {
             bytes.push(0xa5);
@@ -785,10 +806,10 @@ mod tests {
             let (tx, _) = mpsc::unbounded_channel();
             let mut inner = Inner::new(123, crc_bytes, compressing);
             inner.connect_code = 0x1234abcd;
-            let wrong = disconnect_wire(&inner, inner.connect_code + 1);
+            let wrong = incoming_disconnect_wire(&inner, inner.connect_code + 1);
             process_incoming(&mut inner, &wrong, &tx, &mut Vec::new());
             assert!(inner.connected);
-            let wire = disconnect_wire(&inner, inner.connect_code);
+            let wire = incoming_disconnect_wire(&inner, inner.connect_code);
             for end in 0..wire.len() {
                 process_incoming(&mut inner, &wire[..end], &tx, &mut Vec::new());
                 assert!(inner.connected, "truncated disconnect at {end}");
@@ -806,6 +827,14 @@ mod tests {
             inner.close(CloseReason::Transport);
             assert_eq!(inner.close_reason, Some(CloseReason::PeerDisconnect));
         }
+    }
+
+    #[test]
+    fn graceful_disconnect_has_the_exact_reliable_stream_wire_shape() {
+        assert_eq!(
+            disconnect_wire(0x1234_abcd),
+            [0, SessionOp::Disconnect as u8, 0x12, 0x34, 0xab, 0xcd]
+        );
     }
 
     #[test]

@@ -22,3 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[bin]]
 name = "eqlogin"
 path = "src/bin/eqlogin.rs"
+
+[[bin]]
+name = "eqroster"
+path = "src/bin/eqroster.rs"

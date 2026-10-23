@@ -14,14 +14,11 @@ use tokio::time::{Duration, timeout};
 use crate::creation::{self, Capabilities, Catalog, CreationError};
 use crate::opcodes::WorldOp;
 use crate::packet::AppPacket;
+use crate::protocol::{ClientFamily, Protocol};
 use crate::stream::{EqStream, StreamError};
 use crate::wire::{Reader, u16_at, u32_at};
 
 const REPLY_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// RoF2's `LoginInfo_Struct` length. The world server identifies the client
-/// version by this length, so it must be exact.
-const LOGIN_INFO_SIZE: usize = 464;
 
 /// Bytes of fixed data following a character's name in `CharacterSelectEntry`.
 const CHARACTER_TAIL: usize = 274;
@@ -152,7 +149,17 @@ impl WorldClient {
         account_id: u32,
         session_key: &str,
     ) -> Result<Self, WorldError> {
-        Self::connect_mode(address, account_id, session_key, false).await
+        Self::connect_for_family(address, account_id, session_key, ClientFamily::Rof2).await
+    }
+
+    /// Connects using the explicit protocol family selected by the caller.
+    pub async fn connect_for_family(
+        address: SocketAddr,
+        account_id: u32,
+        session_key: &str,
+        family: ClientFamily,
+    ) -> Result<Self, WorldError> {
+        Self::connect_mode(address, account_id, session_key, family, false).await
     }
 
     /// Reconnect to world while crossing a zone boundary using the existing
@@ -162,13 +169,14 @@ impl WorldClient {
         account_id: u32,
         session_key: &str,
     ) -> Result<Self, WorldError> {
-        Self::connect_mode(address, account_id, session_key, true).await
+        Self::connect_mode(address, account_id, session_key, ClientFamily::Rof2, true).await
     }
 
     async fn connect_mode(
         address: SocketAddr,
         account_id: u32,
         session_key: &str,
+        family: ClientFamily,
         zoning: bool,
     ) -> Result<Self, WorldError> {
         let stream = EqStream::connect(address).await?;
@@ -182,7 +190,7 @@ impl WorldClient {
         };
 
         // The payload is a fixed-size buffer holding "account\0key".
-        let mut payload = vec![0u8; LOGIN_INFO_SIZE];
+        let mut payload = vec![0u8; Protocol::for_family(family).world_login_info_size];
         let text = format!("{account_id}\0{session_key}");
         let bytes = text.as_bytes();
         let length = bytes.len().min(payload.len());
@@ -332,6 +340,12 @@ impl WorldClient {
 
     pub async fn recv(&mut self) -> Option<AppPacket> {
         self.stream.recv().await
+    }
+
+    /// Gracefully closes the reliable session and consumes this client.
+    pub async fn disconnect(self) -> Result<(), WorldError> {
+        self.stream.disconnect().await.map_err(StreamError::Io)?;
+        Ok(())
     }
 }
 
